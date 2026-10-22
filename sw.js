@@ -1,6 +1,8 @@
 // Stale-while-revalidate service worker: serves from cache instantly (works offline),
 // refreshes the cache in the background so the next launch picks up updates.
-const CACHE = 'calc-v11';
+// CacheStorage is shared with the blog and other apps on the same origin.
+const CACHE_PREFIX = `calcdm:${self.registration.scope}:`;
+const CACHE = `${CACHE_PREFIX}v12`;
 const ASSETS = ['./', './index.html', './style.css', './app.js', './manifest.webmanifest', './calc-icon.png'];
 
 self.addEventListener('install', (e) => {
@@ -10,7 +12,7 @@ self.addEventListener('install', (e) => {
 self.addEventListener('activate', (e) => {
   e.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => k.startsWith(CACHE_PREFIX) && k !== CACHE).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
@@ -18,7 +20,7 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
   const url = new URL(e.request.url);
-  if (url.origin !== self.location.origin) return;
+  if (url.origin !== self.location.origin || !url.href.startsWith(self.registration.scope)) return;
   e.respondWith(
     caches.open(CACHE).then(async (cache) => {
       const cached = await cache.match(e.request, { ignoreSearch: true });

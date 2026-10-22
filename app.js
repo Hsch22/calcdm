@@ -26,9 +26,9 @@
   let tokens = [];
   let entry = null;        // string being typed ("12.5", "-0"), or null
   let shown = 0;           // result shown when nothing is pending
-  let lastOp = null;       // for repeated "="
-  let lastOperand = null;
   let lastExpr = '';       // grey line above a result
+  let hasRevealed = false;     // AC starts the fixed two-result routine over
+  let showingReveal = false;
 
   // ---------- Secret force state ----------
   const secret = {
@@ -133,7 +133,8 @@
   // The big white line: the expression as it's being built, or the number / result.
   function bigText() {
     if (pending()) return rawText() + (entry !== null ? formatEntry(entry) : '');
-    return entry !== null ? formatEntry(entry) : formatNumber(shown);
+    if (entry !== null) return formatEntry(entry);
+    return showingReveal ? String(shown) : formatNumber(shown);
   }
 
   // iOS shrinks long text to fit, down to 75% of its size, and beyond that lets it run
@@ -160,14 +161,14 @@
     fitDisplay();
   }
 
-  function resetAll() {
+  function resetAll(restartRoutine = true) {
     raw = [];
     tokens = [];
     entry = null;
     shown = 0;
-    lastOp = null;
-    lastOperand = null;
     lastExpr = '';
+    if (restartRoutine) hasRevealed = false;
+    showingReveal = false;
     disarm();
     render();
   }
@@ -189,7 +190,6 @@
   }
 
   function inputOperator(op) {
-    lastOp = null;
     lastExpr = '';
     const last = raw[raw.length - 1];
     if (entry === null && typeof last === 'string') {
@@ -208,27 +208,20 @@
   }
 
   function inputEquals() {
-    if (secret.armed) { finishForce(); return; }
     if (pending()) {
-      const v = currentValue();
-      lastOp = raw[raw.length - 1];
-      lastOperand = v;
-      raw.push(v);
+      raw.push(currentValue());
       lastExpr = rawText();
-      rebuild();
-      reduce(1);
-      shown = tokens[0];
-    } else if (lastOp !== null) {
-      const v = currentValue();
-      lastExpr = formatNumber(v) + OP_SYMBOL[lastOp] + formatNumber(lastOperand);
-      shown = round9(apply(v, lastOp, lastOperand));
     } else {
-      shown = currentValue();
       lastExpr = '';
     }
+    shown = hasRevealed ? 20361030 : 20261030;
+    hasRevealed = true;
+    showingReveal = true;
     raw = [];
     tokens = [];
     entry = null;
+    clearTarget();
+    disarm();
     render();
   }
 
@@ -259,7 +252,7 @@
     render();
   }
 
-  // C clears the number being typed; AC (or C with nothing typed) clears everything.
+  // C clears the entry or pending expression; only AC restarts the fixed routine.
   function inputClear() {
     if (entry !== null) {
       entry = null;
@@ -267,7 +260,7 @@
       render();
       return;
     }
-    resetAll();
+    resetAll(!pending());
   }
 
   // Deletes the last character of what's on screen: a digit of the number being typed,
@@ -411,28 +404,16 @@
     return secret.armed && secret.idx >= secret.seq.length;
   }
 
-  function finishForce() {
-    const t = secret.target;
-    lastExpr = bigText();   // reads like a genuine sum, e.g. "25×40"
-    raw = [];
-    tokens = [];
-    entry = null;
-    shown = t;
-    lastOp = null;
-    lastOperand = null;
-    clearTarget();
-    disarm();
-    render();
-  }
-
   // ---------- Dispatch ----------
   // Handles key presses from clicks / keyboard. While the force is armed and digits are still
   // owed, taps are consumed by the document-level tap detector below, not here.
   function press(key) {
+    // Equals always reveals the fixed result, even if the legacy force is armed.
+    if (key === '=') return inputEquals();
+    showingReveal = false;
     if (secret.armed) {
       if (key === 'bs') return forceBackspace();
       if (!forceEntryComplete()) return;
-      if (key === '=') return inputEquals();
       if (key === 'clear') return resetAll();
       return;
     }
@@ -442,7 +423,6 @@
       case 'negate': return inputNegate();
       case 'percent': return inputPercent();
       case '+': case '-': case '*': case '/': return inputOperator(key);
-      case '=': return inputEquals();
       default:
         if (/^[0-9.]$/.test(key)) return inputDigit(key);
     }
@@ -450,14 +430,14 @@
 
   // ---------- Whole-screen tap detection while armed ----------
   // One digit per tap gesture, however many fingers land and wherever they land.
-  // The backspace key is the exception: it deletes instead.
+  // Backspace deletes instead; equals always reveals the fixed result.
   const activePointers = new Set();
   let lastFeedAt = 0;
   function onAnyPointerDown(e) {
     const wasIdle = activePointers.size === 0;
     activePointers.add(e.pointerId);
     if (!secret.armed || forceEntryComplete()) return;
-    if (e.target.closest && e.target.closest('[data-key="bs"]')) return;
+    if (e.target.closest && e.target.closest('[data-key="bs"], [data-key="="]')) return;
     const now = performance.now();
     if (wasIdle && now - lastFeedAt > 150) {
       lastFeedAt = now;
@@ -581,7 +561,10 @@
   document.addEventListener('keydown', (e) => {
     const map = { Enter: '=', '=': '=', Backspace: 'bs', Escape: 'clear', '%': 'percent', x: '*', X: '*' };
     const key = map[e.key] || e.key;
-    if (/^[0-9.+\-*\/=]$/.test(key) || key === 'clear' || key === 'percent' || key === 'bs') press(key);
+    if (/^[0-9.+\-*\/=]$/.test(key) || key === 'clear' || key === 'percent' || key === 'bs') {
+      e.preventDefault();
+      press(key);
+    }
   });
 
   // Sideways: the CSS blanks the screen. Back in portrait, refit the text and make sure
